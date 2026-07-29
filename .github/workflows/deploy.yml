@@ -70,6 +70,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # GHCR (like all Docker registries) requires lowercase image
+      # references, but `github.repository` preserves this repo's actual
+      # case ("Dedeepya-10/Devops-task") - GitHub Actions' expression
+      # language has no built-in lower() function, so this is computed
+      # once here in a shell step instead.
+      - name: Compute lowercase image repository
+        run: echo "IMAGE_REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -80,14 +88,14 @@ jobs:
       - name: Build image
         run: |
           docker build \
-            -t ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }} \
-            -t ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:latest \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ matrix.service }}:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ matrix.service }}:latest \
             services/${{ matrix.service }}
 
       - name: Scan image for vulnerabilities (Trivy)
         uses: aquasecurity/trivy-action@v0.36.0
         with:
-          image-ref: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }}
+          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ matrix.service }}:${{ github.sha }}
           format: table
           severity: CRITICAL,HIGH
           # Report-only, not blocking: both base images (node:20-alpine,
@@ -100,11 +108,11 @@ jobs:
 
       - name: Push image
         run: |
-          docker push ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }}
-          docker push ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:latest
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ matrix.service }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ matrix.service }}:latest
 
       - name: Load image into kind (for the deploy jobs)
-        run: kind load docker-image ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }} --name advanced-devops
+        run: kind load docker-image ${{ env.REGISTRY }}/${{ env.IMAGE_REPO }}/${{ matrix.service }}:${{ github.sha }} --name advanced-devops
 
   # ---------------------------------------------------------------------------
   # Deploy to development, then staging, then production - strictly in

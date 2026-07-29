@@ -8,7 +8,11 @@ set -euo pipefail
 ENVIRONMENT="${1:?Usage: $0 <environment> <image-tag>}"
 IMAGE_TAG="${2:?Usage: $0 <environment> <image-tag>}"
 REGISTRY="${REGISTRY:-ghcr.io}"
-REPO="${GITHUB_REPOSITORY:-$(git config --get remote.origin.url | sed -E 's#.*/([^/]+/[^/.]+)(\.git)?$#\1#')}"
+# Docker image references must be lowercase, but GITHUB_REPOSITORY (and a
+# repo's git remote URL) preserve the repo's actual case - lowercase it
+# here so this matches exactly what the build job pushed to GHCR.
+REPO_RAW="${GITHUB_REPOSITORY:-$(git config --get remote.origin.url | sed -E 's#.*/([^/]+/[^/.]+)(\.git)?$#\1#')}"
+REPO="$(echo "$REPO_RAW" | tr '[:upper:]' '[:lower:]')"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 OVERLAY_DIR="$SCRIPT_DIR/../k8s/overlays/$ENVIRONMENT"
