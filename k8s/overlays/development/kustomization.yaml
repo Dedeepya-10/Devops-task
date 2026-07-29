@@ -1,0 +1,52 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: development
+
+resources:
+- ../../base
+
+images:
+- name: advanced-api
+  newName: ghcr.io/dedeepya-10/devops-task/api
+  newTag: broken
+- name: advanced-worker
+  newName: ghcr.io/dedeepya-10/devops-task/worker
+  newTag: broken
+
+configMapGenerator:
+- behavior: merge
+  literals:
+  - LOG_LEVEL=debug
+  name: api-config
+- behavior: merge
+  literals:
+  - LOG_LEVEL=debug
+  - POLL_INTERVAL_MS=5000
+  name: worker-config
+
+patches:
+- patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 1
+    - op: replace
+      path: /spec/template/spec/containers/0/resources
+      value:
+        requests: { cpu: 50m, memory: 48Mi }
+        limits: { cpu: 150m, memory: 96Mi }
+  target:
+    kind: Deployment
+    name: api
+- patch: |-
+    - op: replace
+      path: /spec/replicas
+      value: 1
+    - op: replace
+      path: /spec/template/spec/containers/0/resources
+      value:
+        requests: { cpu: 25m, memory: 32Mi }
+        limits: { cpu: 100m, memory: 64Mi }
+  target:
+    kind: Deployment
+    name: worker

@@ -1,0 +1,23 @@
+# Loki + Promtail only - Grafana is already provided by kube-prometheus-stack,
+# so it's disabled here to avoid running (and paying the RAM cost for) a
+# second Grafana instance. Loki gets wired into the existing Grafana as a
+# datasource via a labeled ConfigMap (see terraform/main.tf), which Grafana's
+# built-in sidecar auto-discovers.
+
+grafana:
+  enabled: false
+
+loki:
+  persistence:
+    enabled: false
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 200m, memory: 256Mi }
+  config:
+    limits_config:
+      retention_period: 24h
+
+promtail:
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 100m, memory: 128Mi }

@@ -1,0 +1,17 @@
+node_modules/
+npm-debug.log*
+.DS_Store
+
+# Terraform
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
+terraform/*.tfvars
+terraform/crash.log
+
+# Local kubeconfig context changes shouldn't be committed
+kubeconfig
+
+# Runtime backup artifacts - reproducible via scripts/backup-postgres.sh,
+# not meant to be permanent repo content
+backups/

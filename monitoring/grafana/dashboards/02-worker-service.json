@@ -1,0 +1,93 @@
+{
+  "title": "Worker Service Overview",
+  "uid": "worker-service-overview",
+  "tags": ["advanced-devops", "worker"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-1h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "namespace",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "query": "label_values(worker_jobs_processed_total, namespace)",
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Jobs processed per minute",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(worker_jobs_processed_total{namespace=~\"$namespace\"}[5m]) * 60) by (namespace)",
+          "legendFormat": "{{namespace}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Jobs failed per minute",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(rate(worker_jobs_failed_total{namespace=~\"$namespace\"}[5m]) * 60) by (namespace)",
+          "legendFormat": "{{namespace}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Seconds since last poll (staleness)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "time() - max(worker_last_poll_timestamp_seconds{namespace=~\"$namespace\"}) by (namespace)",
+          "legendFormat": "{{namespace}}"
+        }
+      ],
+      "description": "If this climbs steadily instead of staying near zero, the worker has stopped polling for jobs - this is exactly what the WorkerStalled alert rule watches."
+    },
+    {
+      "id": 4,
+      "title": "Running worker pods",
+      "type": "stat",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(kube_pod_status_phase{namespace=~\"$namespace\", pod=~\"worker-.*\", phase=\"Running\"}) by (namespace)",
+          "legendFormat": "{{namespace}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Worker pod CPU usage",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "sum(rate(container_cpu_usage_seconds_total{namespace=~\"$namespace\", pod=~\"worker-.*\", container=\"worker\"}[5m])) by (namespace, pod)",
+          "legendFormat": "{{namespace}} - {{pod}}"
+        }
+      ]
+    }
+  ]
+}

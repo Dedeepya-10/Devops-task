@@ -1,0 +1,90 @@
+{
+  "title": "Autoscaling (Production HPA)",
+  "uid": "autoscaling-hpa",
+  "tags": ["advanced-devops", "hpa", "production"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-3h", "to": "now" },
+  "description": "The api and worker Deployments in production are the only ones with a HorizontalPodAutoscaler (k8s/overlays/production/hpa.yaml) - this dashboard is where scaling activity would actually show up under load.",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Current vs desired replicas - api",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"production\", horizontalpodautoscaler=\"api\"}",
+          "legendFormat": "current"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"production\", horizontalpodautoscaler=\"api\"}",
+          "legendFormat": "desired"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_spec_min_replicas{namespace=\"production\", horizontalpodautoscaler=\"api\"}",
+          "legendFormat": "min"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"production\", horizontalpodautoscaler=\"api\"}",
+          "legendFormat": "max"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Current vs desired replicas - worker",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "kube_horizontalpodautoscaler_status_current_replicas{namespace=\"production\", horizontalpodautoscaler=\"worker\"}",
+          "legendFormat": "current"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_status_desired_replicas{namespace=\"production\", horizontalpodautoscaler=\"worker\"}",
+          "legendFormat": "desired"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_spec_min_replicas{namespace=\"production\", horizontalpodautoscaler=\"worker\"}",
+          "legendFormat": "min"
+        },
+        {
+          "expr": "kube_horizontalpodautoscaler_spec_max_replicas{namespace=\"production\", horizontalpodautoscaler=\"worker\"}",
+          "legendFormat": "max"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "api CPU utilization vs target (70%)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": { "defaults": { "unit": "percent", "max": 100, "min": 0 }, "overrides": [] },
+      "targets": [
+        {
+          "expr": "avg(rate(container_cpu_usage_seconds_total{namespace=\"production\", pod=~\"api-.*\", container=\"api\"}[5m])) / (150/1000) * 100",
+          "legendFormat": "avg CPU % of request"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Production pod count over time (all workloads)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "targets": [
+        {
+          "expr": "sum(kube_pod_status_phase{namespace=\"production\", phase=\"Running\"}) by (pod)",
+          "legendFormat": "{{pod}}"
+        }
+      ]
+    }
+  ]
+}

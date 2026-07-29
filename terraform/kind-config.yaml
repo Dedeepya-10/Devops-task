@@ -1,0 +1,21 @@
+# Single-node cluster: this demo runs on a laptop with limited RAM, and a
+# single kind node (which also schedules regular workload pods, since the
+# control-plane taint is removed automatically when there are no worker
+# nodes) is enough to demonstrate namespaces, RBAC, HPA, and the monitoring
+# stack. A real deployment on EKS would use multiple worker nodes spread
+# across availability zones - see docs/architecture.md.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: advanced-devops
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30080
+        hostPort: 30080
+        protocol: TCP
+      - containerPort: 30090
+        hostPort: 30090
+        protocol: TCP
+      - containerPort: 30300
+        hostPort: 30300
+        protocol: TCP

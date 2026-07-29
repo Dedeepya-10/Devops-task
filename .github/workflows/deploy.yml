@@ -1,0 +1,164 @@
+name: CI/CD - Multi-Environment Kubernetes Deployment
+
+# Push to main runs the full pipeline through all three environments.
+# Pull requests only get the test job, same reasoning as Round 1/2: a PR
+# branch should never be able to touch a real environment, only prove it
+# passes lint/tests.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint + unit test both services. Runs on GitHub-hosted runners since it
+  # needs no access to the local cluster - just Node.js.
+  # ---------------------------------------------------------------------------
+  test:
+    name: Test (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [api, worker]
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: services/${{ matrix.service }}/package-lock.json
+
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+
+  # ---------------------------------------------------------------------------
+  # Build each image, scan it for vulnerabilities, push it to GHCR for a
+  # real artifact trail. Runs on the self-hosted runner (the same machine
+  # that will deploy) rather than a GitHub-hosted one - not strictly
+  # required for building/pushing, but it means the image that gets loaded
+  # into kind afterward is guaranteed to be the exact same one just built,
+  # with no re-pull step in between.
+  #
+  # Deliberately NOT forcing --platform linux/amd64 here, unlike Round 1/2:
+  # there, the deploy target was a real x86_64 EC2 instance while builds
+  # happened on an Apple Silicon Mac, so cross-platform building was
+  # required. Here the deploy target (kind) runs on this same machine, so
+  # the image is built for whatever architecture this machine actually is -
+  # forcing amd64 would reintroduce the exact "exec format error" that bit
+  # Round 1, just from the opposite direction.
+  # ---------------------------------------------------------------------------
+  build-and-scan:
+    name: Build, scan, push (${{ matrix.service }})
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, kind-local]
+    strategy:
+      matrix:
+        service: [api, worker]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        run: |
+          docker build \
+            -t ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }} \
+            -t ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:latest \
+            services/${{ matrix.service }}
+
+      - name: Scan image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }}
+          format: table
+          severity: CRITICAL,HIGH
+          # Report-only, not blocking: both base images (node:20-alpine,
+          # postgres:16-alpine) can carry upstream CVEs from packages we
+          # don't control the patch timing for. A mature setup would block
+          # on a curated allowlist rather than every CVE; for this demo the
+          # scan output is captured as real evidence rather than gating the
+          # pipeline on CVEs outside our control.
+          exit-code: '0'
+
+      - name: Push image
+        run: |
+          docker push ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }}
+          docker push ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:latest
+
+      - name: Load image into kind (for the deploy jobs)
+        run: kind load docker-image ${{ env.REGISTRY }}/${{ github.repository }}/${{ matrix.service }}:${{ github.sha }} --name advanced-devops
+
+  # ---------------------------------------------------------------------------
+  # Deploy to development, then staging, then production - strictly in
+  # that order (each job `needs` the previous one), so a bad build never
+  # gets anywhere near production before proving itself in the earlier
+  # environments first.
+  # ---------------------------------------------------------------------------
+  deploy-development:
+    name: Deploy to development
+    needs: build-and-scan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, kind-local]
+    environment: development
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy
+        run: ./scripts/deploy.sh development ${{ github.sha }}
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: deploy-development
+    runs-on: [self-hosted, kind-local]
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy
+        run: ./scripts/deploy.sh staging ${{ github.sha }}
+
+  # Requires the "production" GitHub Environment to have a required
+  # reviewer configured (Settings -> Environments -> production -> required
+  # reviewers) - that's what makes this job pause for manual approval
+  # instead of deploying straight through. This is the "separate deployment
+  # approvals for production" requirement; the mechanism is GitHub's own
+  # environment protection rules, not custom code.
+  deploy-production:
+    name: Deploy to production
+    needs: deploy-staging
+    runs-on: [self-hosted, kind-local]
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy (blue-green cutover with automatic rollback)
+        run: ./scripts/deploy.sh production ${{ github.sha }}
+
+      - name: Record deployment status
+        if: always()
+        run: |
+          {
+            echo "## Deployment summary"
+            echo ""
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Commit | \`${{ github.sha }}\` |"
+            echo "| Environment | production |"
+            echo "| Result | ${{ job.status }} |"
+            echo "| Triggered by | ${{ github.actor }} |"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,88 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: production
+
+resources:
+  - ../../base
+  - hpa.yaml
+
+images:
+  - name: advanced-api
+    newName: advanced-api
+    newTag: local
+  - name: advanced-worker
+    newName: advanced-worker
+    newTag: local
+
+configMapGenerator:
+  - name: api-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=warn
+  - name: worker-config
+    behavior: merge
+    literals:
+      - LOG_LEVEL=warn
+      - POLL_INTERVAL_MS=3000
+
+patches:
+  - target:
+      kind: Deployment
+      name: api
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 3
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: { cpu: 150m, memory: 96Mi }
+          limits: { cpu: 400m, memory: 192Mi }
+      # Blue-green-style cutover: bring up all 3 new (green) pods, wait for
+      # every one to pass its readiness probe, only THEN start terminating
+      # the old (blue) pods. maxUnavailable=0 means capacity never drops
+      # during a rollout; maxSurge=100% means the new ReplicaSet is allowed
+      # to fully double the pod count while both versions briefly coexist.
+      # Combined with the deploy workflow's `kubectl rollout status` check
+      # (which triggers an automatic `rollout undo` if the new version
+      # never becomes healthy), a bad deploy never receives production
+      # traffic in the first place.
+      - op: add
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 0
+            maxSurge: 100%
+  - target:
+      kind: Deployment
+      name: worker
+    patch: |-
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: { cpu: 75m, memory: 96Mi }
+          limits: { cpu: 200m, memory: 128Mi }
+      - op: add
+        path: /spec/strategy
+        value:
+          type: RollingUpdate
+          rollingUpdate:
+            maxUnavailable: 0
+            maxSurge: 100%
+  - target:
+      kind: StatefulSet
+      name: postgres
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests: { cpu: 200m, memory: 256Mi }
+          limits: { cpu: 750m, memory: 768Mi }
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: 5Gi

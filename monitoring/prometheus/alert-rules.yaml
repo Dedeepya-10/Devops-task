@@ -1,0 +1,160 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: advanced-devops-alerts
+  namespace: monitoring
+  labels:
+    # kube-prometheus-stack's Prometheus Operator only picks up PrometheusRule
+    # objects carrying this label by default (ruleSelectorNilUsesHelmValues) -
+    # it matches the Helm release name.
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: resource-pressure
+      rules:
+        - alert: HighCPUUsage
+          expr: |
+            sum(rate(container_cpu_usage_seconds_total{namespace=~"development|staging|production", container!=""}[5m])) by (namespace, pod, container)
+            / sum(kube_pod_container_resource_limits{namespace=~"development|staging|production", resource="cpu"}) by (namespace, pod, container)
+            > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} in {{ $labels.namespace }} is near its CPU limit"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} ({{ $labels.namespace }}) has used over 85% of its CPU limit for 5 minutes."
+
+        - alert: HighMemoryUsage
+          expr: |
+            sum(container_memory_working_set_bytes{namespace=~"development|staging|production", container!=""}) by (namespace, pod, container)
+            / sum(kube_pod_container_resource_limits{namespace=~"development|staging|production", resource="memory"}) by (namespace, pod, container)
+            > 0.85
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.pod }} in {{ $labels.namespace }} is near its memory limit"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} ({{ $labels.namespace }}) has used over 85% of its memory limit for 5 minutes - risk of OOMKill."
+
+        - alert: CriticalMemoryUsage
+          expr: |
+            sum(container_memory_working_set_bytes{namespace=~"development|staging|production", container!=""}) by (namespace, pod, container)
+            / sum(kube_pod_container_resource_limits{namespace=~"development|staging|production", resource="memory"}) by (namespace, pod, container)
+            > 0.95
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.pod }} in {{ $labels.namespace }} is about to be OOMKilled"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} ({{ $labels.namespace }}) is above 95% of its memory limit."
+
+    - name: pod-health
+      rules:
+        - alert: PodCrashLooping
+          expr: increase(kube_pod_container_status_restarts_total{namespace=~"development|staging|production"}[15m]) > 3
+          for: 0m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod {{ $labels.pod }} in {{ $labels.namespace }} is crash-looping"
+            description: "Container {{ $labels.container }} in pod {{ $labels.pod }} has restarted more than 3 times in the last 15 minutes."
+
+        - alert: PodNotReady
+          expr: sum(kube_pod_status_ready{namespace=~"development|staging|production", condition="false"}) by (namespace, pod) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Pod {{ $labels.pod }} in {{ $labels.namespace }} has not been ready for 10 minutes"
+            description: "Check `kubectl describe pod {{ $labels.pod }} -n {{ $labels.namespace }}` for the reason."
+
+        - alert: PostgresDown
+          expr: sum(kube_pod_status_phase{namespace=~"development|staging|production", pod=~"postgres-.*", phase="Running"}) by (namespace) < 1
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Postgres is down in {{ $labels.namespace }}"
+            description: "No Running postgres pod in namespace {{ $labels.namespace }} for 2 minutes - api and worker in this namespace cannot function."
+
+    - name: deployment-health
+      rules:
+        - alert: DeploymentReplicasMismatch
+          expr: |
+            kube_deployment_spec_replicas{namespace=~"development|staging|production"}
+            != kube_deployment_status_replicas_available{namespace=~"development|staging|production"}
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Deployment {{ $labels.deployment }} in {{ $labels.namespace }} has not reached its desired replica count"
+            description: "Spec wants {{ $value }} replicas but they are not all available - likely a failed rollout or scheduling problem."
+
+        - alert: HPAMaxedOut
+          expr: |
+            kube_horizontalpodautoscaler_status_current_replicas{namespace="production"}
+            >= kube_horizontalpodautoscaler_spec_max_replicas{namespace="production"}
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.horizontalpodautoscaler }} in production has been at its max replica count for 15 minutes"
+            description: "Autoscaling has hit its ceiling - consider raising maxReplicas or investigating unusually high load."
+
+    - name: application-specific
+      rules:
+        - alert: HighAPIErrorRate
+          expr: |
+            sum(rate(api_http_requests_total{status_code=~"5..", namespace=~"development|staging|production"}[5m])) by (namespace)
+            / sum(rate(api_http_requests_total{namespace=~"development|staging|production"}[5m])) by (namespace)
+            > 0.05
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "API 5xx error rate above 5% in {{ $labels.namespace }}"
+            description: "More than 5% of API requests in {{ $labels.namespace }} have returned a 5xx status for 5 minutes."
+
+        - alert: WorkerStalled
+          expr: time() - max(worker_last_poll_timestamp_seconds{namespace=~"development|staging|production"}) by (namespace) > 60
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Worker in {{ $labels.namespace }} has stopped polling for jobs"
+            description: "No successful poll in over 60 seconds - background jobs are not being processed in {{ $labels.namespace }}."
+
+        - alert: HighJobFailureRate
+          expr: sum(rate(worker_jobs_failed_total{namespace=~"development|staging|production"}[10m])) by (namespace) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Worker jobs are failing in {{ $labels.namespace }}"
+            description: "The worker in {{ $labels.namespace }} has a non-zero job failure rate over the last 10 minutes."
+
+    - name: capacity-and-cost
+      rules:
+        - alert: ResourceQuotaNearlyExhausted
+          expr: |
+            kube_resourcequota{namespace=~"development|staging|production", resource=~"requests.cpu|requests.memory", type="used"}
+            / on (namespace, resource) kube_resourcequota{namespace=~"development|staging|production", resource=~"requests.cpu|requests.memory", type="hard"}
+            > 0.9
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Namespace {{ $labels.namespace }} is close to its resource quota for {{ $labels.resource }}"
+            description: "Used more than 90% of the {{ $labels.resource }} quota - either scale down or raise the quota deliberately, don't let it hit the hard limit and start blocking deployments."
+
+        - alert: PersistentVolumeNearlyFull
+          expr: |
+            kubelet_volume_stats_used_bytes{namespace=~"development|staging|production", persistentvolumeclaim=~"postgres-storage-.*"}
+            / kubelet_volume_stats_capacity_bytes{namespace=~"development|staging|production", persistentvolumeclaim=~"postgres-storage-.*"}
+            > 0.85
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Postgres volume in {{ $labels.namespace }} is over 85% full"
+            description: "See docs/runbooks/disaster-recovery.md for the volume expansion / backup procedure before this fills up."
